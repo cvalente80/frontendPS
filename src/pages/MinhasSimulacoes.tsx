@@ -334,7 +334,7 @@ export default function MinhasSimulacoes(): React.ReactElement {
                 const typeOk = filter === 'all' || it.type === filter;
                 const hasPdf = Boolean((it as any)?.pdfUrl);
                 const policySubmitted = Boolean((it as any)?.policySubmitted);
-                const cotacaoConfirmada = Boolean((it as any)?.cotacaoConfirmada);
+                const cotacaoConfirmada = Boolean((it as any)?.cotacaoConfirmada || (it as any)?.payload?.cotacaoConfirmada);
                 const statusKey = !isAdmin && policySubmitted
                   ? 'simulacao_aprovada_por_si'
                   : hasPdf || cotacaoConfirmada
@@ -369,7 +369,7 @@ export default function MinhasSimulacoes(): React.ReactElement {
               };
               const hasPdf = Boolean((it as any)?.pdfUrl);
               const policySubmitted = Boolean((it as any)?.policySubmitted);
-              const cotacaoConfirmada = Boolean((it as any)?.cotacaoConfirmada);
+              const cotacaoConfirmada = Boolean((it as any)?.cotacaoConfirmada || (it as any)?.payload?.cotacaoConfirmada);
               const statusKey: keyof typeof STATUS_MAP = !isAdmin && policySubmitted
                 ? 'simulacao_aprovada_por_si'
                 : hasPdf || cotacaoConfirmada
@@ -398,12 +398,16 @@ export default function MinhasSimulacoes(): React.ReactElement {
                   {it.type === 'auto' ? (
                     (() => {
                       const rawP = (it as any).payload || {};
-                      // Se cotacaoConfirmada mas sem dados de preço, enriquecer com o documento :choice: correspondente
-                      const p = (cotacaoConfirmada && !rawP.periodicidadeEscolhida && plate)
+                      // Associar a escolha à simulação de origem; a matrícula não é única entre simulações.
+                      const p = (cotacaoConfirmada && !rawP.periodicidadeEscolhida)
                         ? (() => {
-                            const choiceItem = choiceItems
-                              .filter(d => (d as any)?.payload?.matricula === plate)
-                              .sort((a, b) => ((b as any)?.createdAt?.seconds || 0) - ((a as any)?.createdAt?.seconds || 0))[0];
+                            const exactChoiceItem = choiceItems.find(
+                              d => (d as any)?.payload?.sourceSimulationId === it.id,
+                            );
+                            const plateChoices = plate
+                              ? choiceItems.filter(d => (d as any)?.payload?.matricula === plate)
+                              : [];
+                            const choiceItem = exactChoiceItem || (plateChoices.length === 1 ? plateChoices[0] : undefined);
                             return choiceItem ? { ...rawP, ...(choiceItem as any).payload } : rawP;
                           })()
                         : rawP;
@@ -416,6 +420,15 @@ export default function MinhasSimulacoes(): React.ReactElement {
                       const cob = Array.isArray(p.coberturas) ? p.coberturas.join(', ') : (p.coberturas || '');
                       const outros = (p.outrosPedidos || '').toString().trim() || '-';
                       const nif = p.contribuinte || p.nif || '-';
+                      const paymentMethod = p.metodoPagamento === 'multibanco' ? 'multibanco' : 'debito_direto';
+                      const methodPrices = p.todosPrecosPorMetodo?.[paymentMethod] as Record<string, string | null | undefined> | undefined;
+                      const methodFollowingPrices = p.todosPrecosSeguintesPorMetodo?.[paymentMethod] as Record<string, string | null | undefined> | undefined;
+                      const displayedPrices = methodPrices && Object.keys(methodPrices).length > 0
+                        ? methodPrices
+                        : p.todosPrecos as Record<string, string | null | undefined> | undefined;
+                      const selectedPrice = displayedPrices?.[p.periodicidadeEscolhida] ?? p.premioEscolhido;
+                      const selectedFollowingPrice = methodFollowingPrices?.[p.periodicidadeEscolhida] ?? p.todosPrecosSeguintes?.[p.periodicidadeEscolhida];
+                      const paymentMethodLabel = paymentMethod === 'multibanco' ? 'Multibanco' : 'Débito direto';
                       return (
                         <div className="text-sm text-blue-800 space-y-1">
                           <div className="font-semibold">{t('mysims:detail.simTitle')}</div>
@@ -433,14 +446,11 @@ export default function MinhasSimulacoes(): React.ReactElement {
                           <div>{t('mysims:detail.others')}: {outros}</div>
                           {p.periodicidadeEscolhida && (
                             <div className="mt-3 pt-3 border-t border-blue-200">
-                              <div className="font-semibold text-blue-700 mb-1">💶 {t('mysims:detail.quotedPrice', 'Cotação obtida')}</div>
-                              <div className="font-bold text-lg text-green-700">{p.premioEscolhido ?? '-'} <span className="text-sm font-normal text-blue-700">/ {p.periodicidadeEscolhida}</span></div>
-                              {p.todosPrecos && (
-                                <div className="mt-1 grid grid-cols-2 gap-x-4 text-xs text-blue-600">
-                                  {Object.entries(p.todosPrecos as Record<string,string>).map(([k, v]) => v ? (
-                                    <span key={k} className={p.periodicidadeEscolhida === k ? 'font-bold text-green-700' : ''}>{k}: {v}</span>
-                                  ) : null)}
-                                </div>
+                              <div className="font-semibold text-base text-blue-700 mb-1">💶 {t('mysims:detail.quotedPrice', 'Cotação obtida')}</div>
+                              <div className="text-base text-blue-700">{paymentMethodLabel}</div>
+                              <div className="font-bold text-xl text-green-700">{selectedPrice ?? '-'} <span className="text-base font-normal text-blue-700">/ {p.periodicidadeEscolhida} (1º recibo)</span></div>
+                              {selectedFollowingPrice && selectedFollowingPrice !== selectedPrice && (
+                                <div className="text-sm text-blue-600">Recibos seguintes: {selectedFollowingPrice}</div>
                               )}
                             </div>
                           )}
